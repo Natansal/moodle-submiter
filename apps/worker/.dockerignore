@@ -1,0 +1,5 @@
+node_modules
+**/dist
+**/.turbo
+auth_info_baileys
+.git

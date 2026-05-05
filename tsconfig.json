@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/redis" },
+    { "path": "./packages/shared-types" },
+    { "path": "./packages/shared-crypto" },
+    { "path": "./apps/worker" },
+    { "path": "./apps/listener" }
+  ]
+}
