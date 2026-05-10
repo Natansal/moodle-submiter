@@ -1,17 +1,11 @@
 import { Router } from 'express';
 import Boom from '@hapi/boom';
 import { decryptJson } from '@repo/shared-crypto';
+import type { EncryptedCredentials } from '@repo/shared-types';
 import type { AppConfig } from '../config.js';
 import type { MoodleCredentials } from '../services/moodle-automation.service.js';
-import { MoodleAutomation } from '../services/moodle-automation.service.js';
 import { LockService } from '@repo/redis';
-import {
-  constantTimeEqualString,
-  getTriggerClientIp,
-  isInvokerIpAllowed,
-  readBearerToken,
-} from '../security/trigger-auth.js';
-import { ALLOWED_TRIGGER_INVOKER_IPS } from '../security/trigger-security.constants.js';
+import { constantTimeEqualString, readBearerToken } from '../security/trigger-auth.js';
 import { isValidWebhookPayload, isTargetHostAllowed } from '../validation/payload.validation.js';
 
 /**
@@ -27,11 +21,6 @@ export function createTriggerRouter(config: AppConfig, lockService: LockService)
       throw Boom.unauthorized();
     }
 
-    const clientIp = getTriggerClientIp(req);
-    if (!isInvokerIpAllowed(clientIp, ALLOWED_TRIGGER_INVOKER_IPS)) {
-      throw Boom.forbidden();
-    }
-
     const body = req.body;
     if (!isValidWebhookPayload(body)) {
       throw Boom.badRequest('Invalid payload');
@@ -41,12 +30,7 @@ export function createTriggerRouter(config: AppConfig, lockService: LockService)
       throw Boom.badRequest('targetUrl host not allowed');
     }
 
-    let credentials: MoodleCredentials;
-    try {
-      credentials = decryptJson<MoodleCredentials>(body.credentials, config.encryptionKey);
-    } catch {
-      throw Boom.badRequest('Failed to decrypt credentials');
-    }
+    const credentials = await resolveCredentials(body, config);
 
     let lockAcquired = false;
     try {
@@ -69,6 +53,7 @@ export function createTriggerRouter(config: AppConfig, lockService: LockService)
     // but never reach the client (the 202 response was already sent above).
     setImmediate(async () => {
       try {
+        const { MoodleAutomation } = await import('../services/moodle-automation.service.js');
         const automation = new MoodleAutomation({
           credentials,
           targetUrl: body.targetUrl,
@@ -90,4 +75,18 @@ export function createTriggerRouter(config: AppConfig, lockService: LockService)
   });
 
   return router;
+}
+
+async function resolveCredentials(
+  body: { credentials?: EncryptedCredentials },
+  config: AppConfig,
+): Promise<MoodleCredentials> {
+  if (!body.credentials) {
+    throw Boom.badRequest('Missing encrypted credentials');
+  }
+  try {
+    return decryptJson<MoodleCredentials>(body.credentials, config.encryptionKey);
+  } catch {
+    throw Boom.badRequest('Failed to decrypt credentials');
+  }
 }

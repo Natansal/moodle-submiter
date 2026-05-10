@@ -6,7 +6,7 @@ const IV_LENGTH = 12;
 const KEY_LENGTH = 32;
 
 export function getKeyFromEnv(): Buffer {
-  const raw = process.env.CREDENTIALS_ENCRYPTION_KEY;
+  const raw = process.env.CREDENTIALS_ENCRYPTION_KEY?.trim();
   if (!raw) {
     throw new Error('CREDENTIALS_ENCRYPTION_KEY is required.');
   }

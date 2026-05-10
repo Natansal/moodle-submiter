@@ -12,6 +12,10 @@
     },
     "typecheck": {
       "dependsOn": ["^build"]
+    },
+    "deploy": {
+      "dependsOn": ["build"],
+      "cache": false
     }
   }
 }

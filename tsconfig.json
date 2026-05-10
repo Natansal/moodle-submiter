@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
+    { "path": "./packages/database" },
     { "path": "./packages/redis" },
     { "path": "./packages/shared-types" },
     { "path": "./packages/shared-crypto" },

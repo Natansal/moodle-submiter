@@ -1,0 +1,18 @@
+# Build from monorepo root with Dockerfile under apps/worker (see deploy.sh).
+# `gcloud builds submit --tag` cannot pass `-f`; use this config instead.
+# `_IMAGE` must be set when submitting, e.g. --substitutions=_IMAGE=... (see deploy.sh)
+
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_IMAGE}'
+      - '-f'
+      - 'apps/worker/Dockerfile'
+      - '.'
+
+images:
+  - '${_IMAGE}'
+
+timeout: 3600s

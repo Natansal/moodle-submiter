@@ -47,6 +47,9 @@ web_modules/
 # TypeScript cache
 *.tsbuildinfo
 
+# Prisma client (generated; prisma generate before build)
+packages/database/generated/
+
 # Optional npm cache directory
 .npm
 
@@ -142,3 +145,6 @@ auth_info_baileys/
 .turbo/
 **/.turbo/
 **/dist/
+
+# Listener GCP bundle (local + Docker build output)
+apps/listener/deploy/bundle/

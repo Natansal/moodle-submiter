@@ -14,15 +14,14 @@ export function isValidWebhookPayload(body: unknown): body is WebhookPayload {
     return false;
   }
   const c = b.credentials;
-  if (!c || typeof c !== 'object') {
-    return false;
-  }
-  const cr = c as Record<string, unknown>;
-  return (
-    typeof cr.iv === 'string' &&
-    typeof cr.ciphertext === 'string' &&
-    typeof cr.tag === 'string'
-  );
+  const hasEncryptedCredentials =
+    !!c &&
+    typeof c === 'object' &&
+    typeof (c as Record<string, unknown>).iv === 'string' &&
+    typeof (c as Record<string, unknown>).ciphertext === 'string' &&
+    typeof (c as Record<string, unknown>).tag === 'string';
+
+  return hasEncryptedCredentials;
 }
 
 /**

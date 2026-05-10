@@ -1,0 +1,76 @@
+# Builds apps/client and publishes to GitHub Pages (project site:
+# https://<owner>.github.io/<repo>/).
+#
+# Setup (once):
+#   Repo → Settings → Pages → Build and deployment → Source: GitHub Actions
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   VITE_LISTENER_API_URL   — public URL of the listener API (e.g. http://IP:3001)
+#   VITE_SUPABASE_URL
+#   VITE_SUPABASE_ANON_KEY
+#
+# Listener CORS: set CLIENT_ORIGIN=https://<owner>.github.io/<repo> (no trailing slash)
+
+name: Deploy client to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/client/**'
+      - '.github/workflows/deploy-client-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build client
+        env:
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_LISTENER_API_URL: ${{ secrets.VITE_LISTENER_API_URL }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: pnpm exec turbo run build --filter=@app/client
+
+      - name: SPA fallback (deep links on GitHub Pages)
+        run: |
+          cp apps/client/dist/index.html apps/client/dist/404.html
+          touch apps/client/dist/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/client/dist
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

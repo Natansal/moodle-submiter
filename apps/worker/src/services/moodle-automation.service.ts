@@ -3,7 +3,6 @@ import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import Boom from '@hapi/boom';
 import { random } from '../utils/random.js';
-import config from '../config.js';
 import { ALLOWED_TRIGGER_TARGET_HOSTS } from '../security/trigger-security.constants.js';
 
 /** Moodle login credentials (decrypted from the webhook payload). */
@@ -60,11 +59,15 @@ export class MoodleAutomation {
     let page: Page | undefined;
 
     try {
+      const isProduction = this.options.mode === 'production';
       browser = await chromium.launch({
-        headless: this.options.mode === 'production',
+        headless: isProduction,
+        // Docker / root cannot use Chromium’s sandbox unless using a dedicated user + seccomp; see Playwright Docker guide.
+        chromiumSandbox: !isProduction,
         args: [
           '--disable-blink-features=AutomationControlled',
           '--disable-features=IsolateOrigins,site-per-process',
+          ...(isProduction ? ['--disable-dev-shm-usage'] : []),
         ],
       });
 

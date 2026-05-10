@@ -3,11 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "NODE_ENV=development tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "NODE_ENV=production tsc -p tsconfig.json",
     "start": "NODE_ENV=production node dist/index.js",
-    "encrypt-body": "tsx scripts/encrypt-body.ts"
+    "encrypt-body": "tsx scripts/encrypt-body.ts",
+    "deploy": "bash deploy.sh",
+    "grant-secret-access": "bash grant-secret-access.sh"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
@@ -16,7 +21,7 @@
     "@repo/shared-types": "workspace:*",
     "dotenv": "^17.4.2",
     "express": "^5.1.0",
-    "playwright": "^1.59.1",
+    "playwright": "1.59.1",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
   },

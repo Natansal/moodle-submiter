@@ -3,9 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "deploy": "turbo run deploy",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

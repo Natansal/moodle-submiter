@@ -14,13 +14,13 @@ export function createApp(config: AppConfig): express.Express {
   app.set('trust proxy', true);
   app.use(express.json({ limit: '16kb' }));
 
+  app.get('/ping', (_req, res) => {
+    res.status(200).send('ok');
+  });
+
   const lockService = new LockService();
 
   app.use(createTriggerRouter(config, lockService));
-
-  app.get('/healthz', (_req, res) => {
-    res.status(200).send('ok');
-  });
 
   app.use(boomErrorHandler);
 

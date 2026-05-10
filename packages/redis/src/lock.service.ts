@@ -2,15 +2,22 @@ import { createHash } from 'node:crypto';
 import type { Redis } from '@upstash/redis';
 import { getRedisClient } from './client.js';
 
+const KEY_PREFIX = 'lock:';
 const DEFAULT_LOCK_TTL_SECONDS = 60 * 60 * 24; // 24 hours
 
 export class LockService {
-  private readonly redis: Redis;
+  private redis: Redis | undefined;
   private readonly ttlSeconds: number;
 
   constructor(ttlSeconds = DEFAULT_LOCK_TTL_SECONDS) {
-    this.redis = getRedisClient();
     this.ttlSeconds = ttlSeconds;
+  }
+
+  private getRedis(): Redis {
+    if (!this.redis) {
+      this.redis = getRedisClient();
+    }
+    return this.redis;
   }
 
   /**
@@ -21,7 +28,7 @@ export class LockService {
    */
   async acquire(email: string, url: string): Promise<boolean> {
     const lockKey = this.buildKey(email, url);
-    const result = await this.redis.set(lockKey, 'processed', {
+    const result = await this.getRedis().set(lockKey, 'processed', {
       nx: true,
       ex: this.ttlSeconds,
     });
@@ -33,11 +40,11 @@ export class LockService {
    */
   async release(email: string, url: string): Promise<void> {
     const lockKey = this.buildKey(email, url);
-    await this.redis.del(lockKey);
+    await this.getRedis().del(lockKey);
   }
 
   private buildKey(email: string, url: string): string {
     const hash = createHash('sha256').update(`${email}:${url}`).digest('hex');
-    return `lock:${hash}`;
+    return `${KEY_PREFIX}${hash}`;
   }
 }

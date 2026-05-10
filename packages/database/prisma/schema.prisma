@@ -1,0 +1,52 @@
+generator client {
+  provider        = "prisma-client-js"
+  // Emit inside the package so `pnpm deploy` copies the generated engine + client into the listener bundle.
+  output          = "../generated/prisma"
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @db.Uuid
+  email     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  session  WhatsAppSession?
+  settings UserSettings?
+
+  @@map("users")
+}
+
+model WhatsAppSession {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  creds     Json
+  keys      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("whatsapp_sessions")
+}
+
+model UserSettings {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @unique @db.Uuid
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  encryptedCredentials Json?
+  activeGroupIds       String[]
+  /** Per manually-added private chat: canonical PN JID + all known aliases (@s.whatsapp.net, @lid). */
+  privateMonitors      Json?
+  uptimes              Json?
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([userId])
+  @@map("user_settings")
+}

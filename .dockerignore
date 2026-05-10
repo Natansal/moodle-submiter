@@ -1,0 +1,43 @@
+# Used when building with context = repo root, e.g.:
+#   docker build -f apps/listener/Dockerfile .
+#   docker build -f apps/worker/Dockerfile .
+# Docker does not read apps/**/.dockerignore for those builds unless context is set to those dirs.
+
+# Dependencies & tooling caches (reinstalled in the image)
+**/node_modules
+**/.pnpm-store
+.pnpm-store
+
+# Build artefacts (fresh compile / turbo prune happens in-container)
+**/dist
+**/*.tsbuildinfo
+**/.turbo
+turbo_daemon.log
+
+# Local turbo prune / deploy scratch (must not confuse COPY . . )
+out/
+**/tmp-*-deploy
+
+# VCS / editor
+.git
+.gitignore
+.github
+.idea
+.cursor
+**/.DS_Store
+Thumbs.db
+
+# Secrets & WhatsApp Baileys local session dirs (any path — Cloud Build context must not ship local .env)
+**/.env
+**/.env.*
+.env
+.env.*
+!.env.example
+**/auth_info_baileys
+auth_info_baileys*
+
+# Diagnostics
+coverage/
+**/*.log
+pnpm-debug.log
+.pnpm-debug.log
