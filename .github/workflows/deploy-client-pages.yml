@@ -5,7 +5,8 @@
 #   Repo → Settings → Pages → Build and deployment → Source: GitHub Actions
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
-#   VITE_LISTENER_API_URL   — public URL of the listener API (e.g. http://IP:3001)
+#   VITE_LISTENER_API_URL   — HTTPS URL of the listener when using GitHub Pages (mixed content).
+#                             Plain http:// will be blocked by the browser.
 #   VITE_SUPABASE_URL
 #   VITE_SUPABASE_ANON_KEY
 #

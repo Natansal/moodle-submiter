@@ -50,9 +50,19 @@ function parseUptimes(input: ListenerSettingsPayload['uptimes']): Uptime[] {
   return out;
 }
 
+/** Browser Origin header is scheme+host+port only — never includes /repo path (GitHub Pages). */
+function normalizedWebOrigin(raw: string): string {
+  try {
+    const u = new URL(raw.trim());
+    return u.origin;
+  } catch {
+    return raw.trim();
+  }
+}
+
 export function createApp(sessionManager: SessionManager): express.Express {
   const app = express();
-  const clientOrigin = process.env.CLIENT_ORIGIN ?? 'http://localhost:5173';
+  const clientOrigin = normalizedWebOrigin(process.env.CLIENT_ORIGIN ?? 'http://localhost:5173');
 
   app.use(
     cors({
