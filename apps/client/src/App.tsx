@@ -9,6 +9,7 @@ import { DashboardPage } from './pages/Dashboard';
 import { Spinner } from './components/Spinner';
 
 function AuthGate({ children, requireAuth }: { children: React.ReactNode; requireAuth: boolean }) {
+  // For loading user auth state
   const [loading, setLoading] = useState(true);
   const [authed, setAuthed] = useState(false);
 
