@@ -8,6 +8,12 @@ import { LockService } from '@repo/redis';
 import { constantTimeEqualString, readBearerToken } from '../security/trigger-auth.js';
 import { isValidWebhookPayload, isTargetHostAllowed } from '../validation/payload.validation.js';
 
+function formatAutomationError(error: unknown): string {
+  if (Boom.isBoom(error)) return error.message;
+  if (error instanceof Error && error.message) return error.message;
+  return 'Automation failed';
+}
+
 /**
  * Creates and returns the `/trigger` route with all authentication,
  * validation, and automation orchestration logic.
@@ -47,31 +53,29 @@ export function createTriggerRouter(config: AppConfig, lockService: LockService)
       return res.status(202).json({ accepted: true, duplicate: true });
     }
 
-    res.status(202).json({ accepted: true });
+    try {
+      const { MoodleAutomation } = await import('../services/moodle-automation.service.js');
+      const automation = new MoodleAutomation({
+        credentials,
+        targetUrl: body.targetUrl,
+        mode: body.mode ?? config.mode,
+      });
 
-    // Fire-and-forget: Boom errors from automation.run() are logged here
-    // but never reach the client (the 202 response was already sent above).
-    setImmediate(async () => {
+      console.log(`[Worker] Starting Playwright process...`);
+      await automation.run();
+      console.log(`[Worker] Automation finished successfully.`);
+
+      return res.status(200).json({ ok: true });
+    } catch (error) {
+      console.error('[Worker] Failed to process URL:', error);
       try {
-        const { MoodleAutomation } = await import('../services/moodle-automation.service.js');
-        const automation = new MoodleAutomation({
-          credentials,
-          targetUrl: body.targetUrl,
-          mode: body.mode ?? config.mode,
-        });
-
-        console.log(`[Worker] Starting Playwright process...`);
-        await automation.run();
-        console.log(`[Worker] Automation finished successfully.`);
-      } catch (error) {
-        console.error('[Worker] Failed to process URL:', error);
-        try {
-          await lockService.release(credentials.email, body.targetUrl);
-        } catch (unlockError) {
-          console.error('[Worker] Failed to release lock after error:', unlockError);
-        }
+        await lockService.release(credentials.email, body.targetUrl);
+      } catch (unlockError) {
+        console.error('[Worker] Failed to release lock after error:', unlockError);
       }
-    });
+      const explanation = formatAutomationError(error);
+      return res.status(500).json({ ok: false, error: explanation });
+    }
   });
 
   return router;

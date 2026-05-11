@@ -799,8 +799,17 @@ export class SessionManager extends EventEmitter {
       body: JSON.stringify(payload),
     });
 
-    if (!response.ok && response.status !== 202) {
-      throw Boom.badGateway(`Worker responded with status ${response.status}`);
+    if (!response.ok) {
+      let detail = `Worker responded with status ${response.status}`;
+      try {
+        const errBody = (await response.json()) as { error?: unknown };
+        if (typeof errBody?.error === 'string' && errBody.error) {
+          detail = `${detail}: ${errBody.error}`;
+        }
+      } catch {
+        /* body not JSON */
+      }
+      throw Boom.badGateway(detail);
     }
   }
 

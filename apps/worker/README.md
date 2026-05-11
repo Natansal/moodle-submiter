@@ -64,7 +64,7 @@ pnpm encrypt-body <targetUrl> <email> <password>
 
 ### `POST /trigger`
 
-Accepts an encrypted Moodle credential payload and queues a browser automation run.
+Accepts an encrypted Moodle credential payload and runs browser automation before responding (keeps CPU allocated on serverless until Playwright finishes).
 
 **Headers:**
 - `Authorization: Bearer <TRIGGER_SHARED_SECRET>`
@@ -79,12 +79,15 @@ Accepts an encrypted Moodle credential payload and queues a browser automation r
 ```
 
 **Responses:**
-- `202` — Accepted (automation queued)
-- `202` with `{ "duplicate": true }` — Already processed
+- `200` with `{ "ok": true }` — Automation completed successfully
+- `500` with `{ "ok": false, "error": "<message>" }` — Automation failed (lock released so the trigger can be retried)
+- `202` with `{ "accepted": true, "duplicate": true }` — Already processed (dedup lock; no new run)
 - `400` — Invalid payload or decryption failure
 - `401` — Missing/invalid Bearer token
 - `403` — Client IP not in allowlist
-- `500` — Lock service unavailable
+- `500` (no `ok` field, via error handler) — Lock service or other internal failure before automation runs
+
+On Cloud Run, set **request timeout** above your worst-case Playwright duration (up to 3600s); the HTTP response is withheld until automation finishes.
 
 ### `GET /healthz`
 
