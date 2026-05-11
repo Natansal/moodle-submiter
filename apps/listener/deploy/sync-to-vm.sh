@@ -14,6 +14,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 BUNDLE="${REPO_ROOT}/apps/listener/deploy/bundle"
+if [[ "${1:-}" == "--" ]]; then
+  shift
+fi
 TARGET="${1:-${DEPLOY_HOST:-}}"
 
 log() {
@@ -64,6 +67,11 @@ if [[ -z "${TARGET}" ]]; then
   die "Usage: $0 USER@host_or_ip
   Example: $0 atent_office@34.57.84.184
   Or:       DEPLOY_HOST=user@ip $0"
+fi
+
+if [[ "${TARGET}" == "--" ]]; then
+  die "Target was '--' (wrong argument order). Use: $0 user@ip
+  If you had 'bash script -- user@ip', remove the '--' or we now skip one leading '--' only when the real host is the next argument."
 fi
 
 if [[ ! -d "${BUNDLE}/dist" ]] || [[ ! -f "${BUNDLE}/package.json" ]]; then

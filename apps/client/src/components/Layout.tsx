@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { APP_NAME } from '../brand';
 
@@ -8,7 +8,6 @@ const navItems = [
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
-  const location = useLocation();
   const navigate = useNavigate();
 
   async function handleLogout() {
@@ -33,17 +32,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </div>
             <nav className="flex gap-1">
               {navItems.map((item) => (
-                <button
+                <NavLink
                   key={item.path}
-                  onClick={() => navigate(item.path)}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                    location.pathname === item.path
-                      ? 'bg-gray-800 text-white'
-                      : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-200'
-                  }`}
+                  to={item.path}
+                  className={({ isActive }) =>
+                    `rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                      isActive
+                        ? 'bg-gray-800 text-white'
+                        : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-200'
+                    }`
+                  }
                 >
                   {item.label}
-                </button>
+                </NavLink>
               ))}
             </nav>
           </div>

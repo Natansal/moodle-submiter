@@ -10,7 +10,8 @@
     "dev": "NODE_ENV=development tsx watch src/index.ts",
     "build": "NODE_ENV=production tsc -p tsconfig.json",
     "start": "NODE_ENV=production node dist/index.js",
-    "bundle:vm": "bash ./deploy/bundle-for-vm.sh"
+    "bundle:vm": "bash ./deploy/bundle-for-vm.sh",
+    "deploy": "bash ./deploy/deploy-to-vm.sh atent_office@34.57.84.184"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",

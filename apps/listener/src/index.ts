@@ -1,9 +1,13 @@
+import './prefer-ipv4-dns.js';
 import 'dotenv/config';
 import type { Server } from 'node:http';
+import { initDatabase } from '@repo/database';
 import { createApp } from './app.js';
+import { logListenerError } from './log-listener-error.js';
 import { SessionManager } from './session-manager.js';
 
 async function bootstrap() {
+  await initDatabase();
   const sessionManager = new SessionManager();
   const app = createApp(sessionManager);
   const port = Number(process.env.PORT ?? 3001);
@@ -18,10 +22,13 @@ async function bootstrap() {
   });
 
   void sessionManager.bootstrap().catch((error) => {
-    console.error('[Listener] Session bootstrap failed:', error);
+    logListenerError('[Listener] Session bootstrap failed', error);
   });
 
+  let shuttingDown = false;
   async function shutdown(signal: string) {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log(`[Listener] ${signal} received — shutting down...`);
     server.close(async () => {
       await sessionManager.dispose();
@@ -34,6 +41,6 @@ async function bootstrap() {
 }
 
 bootstrap().catch((error) => {
-  console.error('[Listener] Failed to bootstrap:', error);
+  logListenerError('[Listener] Failed to bootstrap', error);
   process.exit(1);
 });

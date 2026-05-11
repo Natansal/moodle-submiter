@@ -25,7 +25,28 @@ module.exports = {
       interpreter: 'node',
       instances: 1,
       exec_mode: 'fork',
+      kill_timeout: 8000,
+      restart_delay: 5000,
+      max_restarts: 8,
+      min_uptime: '5s',
       max_memory_restart: '850M',
+      env,
+    },
+    /**
+     * TryCloudflare quick tunnel → HTTPS for GitHub Pages (URL may change on restart).
+     * Requires: `sudo apt install cloudflared` (or .deb from GitHub). Binary must exist at `script` path.
+     * Remove this block if you terminate TLS another way (nginx, named Cloudflare tunnel, etc.).
+     */
+    {
+      name: 'cloudflared-tunnel',
+      cwd: __dirname,
+      script: '/usr/bin/cloudflared',
+      args: 'tunnel --url http://127.0.0.1:3001',
+      interpreter: 'none',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      max_memory_restart: '120M',
       env,
     },
   ],
