@@ -4,7 +4,7 @@ import Boom from '@hapi/boom';
 import type { NextFunction, Response } from 'express';
 import { authMiddleware, type AuthedRequest } from './api/auth.middleware.js';
 import { boomErrorHandler } from './api/boom-error-handler.js';
-import { SessionManager, type SessionReadyEvent } from './session-manager.js';
+import { SessionManager } from './session-manager.js';
 import type { ListenerSettingsPayload } from '@repo/shared-types';
 import type { Day, Uptime } from '@repo/redis';
 
@@ -67,7 +67,7 @@ export function createApp(sessionManager: SessionManager): express.Express {
   app.use(
     cors({
       origin: clientOrigin,
-      credentials: true,
+      credentials: false,
       methods: ['GET', 'POST', 'OPTIONS'],
       allowedHeaders: ['content-type', 'authorization'],
     }),
@@ -81,47 +81,22 @@ export function createApp(sessionManager: SessionManager): express.Express {
   app.use('/api', authMiddleware);
   app.use('/api', ensureUserMiddleware(sessionManager));
 
-  app.get('/api/qr', async (req: AuthedRequest, res) => {
+  /**
+   * QR + session state for the setup page (short polling from the client while that route is mounted).
+   * TryCloudflare quick tunnels buffer GET SSE; polling avoids that (cloudflared#1449).
+   */
+  app.get('/api/qr/poll', async (req: AuthedRequest, res) => {
     const userId = req.userId;
     if (!userId) {
       throw Boom.unauthorized('Missing user id');
     }
 
-    res.setHeader('content-type', 'text/event-stream');
-    res.setHeader('cache-control', 'no-cache, no-transform');
-    res.setHeader('connection', 'keep-alive');
-    res.flushHeaders?.();
-
-    const onQr = (event: { userId: string; qr: string }) => {
-      if (event.userId !== userId) return;
-      res.write(`event: qr\n`);
-      res.write(`data: ${JSON.stringify({ qr: event.qr })}\n\n`);
-    };
-
-    const onReady = (event: SessionReadyEvent) => {
-      if (event.userId !== userId) return;
-      res.write(`event: ready\n`);
-      res.write(`data: ${JSON.stringify({ connected: event.connected })}\n\n`);
-    };
-
-    sessionManager.on('session:qr', onQr);
-    sessionManager.on('session:ready', onReady);
-
     await sessionManager.createSession(userId);
 
-    const replayQr = sessionManager.getLatestQr(userId);
-    if (replayQr) {
-      res.write(`event: qr\n`);
-      res.write(`data: ${JSON.stringify({ qr: replayQr })}\n\n`);
-    }
-
-    res.write(`event: ready\n`);
-    res.write(`data: ${JSON.stringify({ connected: sessionManager.isSessionConnected(userId) })}\n\n`);
-
-    req.on('close', () => {
-      sessionManager.off('session:qr', onQr);
-      sessionManager.off('session:ready', onReady);
-      res.end();
+    res.setHeader('cache-control', 'no-store');
+    res.status(200).json({
+      qr: sessionManager.getLatestQr(userId) ?? null,
+      connected: sessionManager.isSessionConnected(userId),
     });
   });
 

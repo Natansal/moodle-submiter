@@ -70,34 +70,114 @@ export async function saveSettings(payload: unknown) {
   if (!res.ok) throw new Error(`Failed to save settings (${res.status})`);
 }
 
-export async function openQrStream(
+const POLL_MS = 1500;
+const POLL_CONNECTED_MS = 10_000;
+
+export type QrPollController = { dispose: () => void; refresh: () => void };
+
+/**
+ * Polls `/api/qr/poll` (faster while waiting for QR, every 10s when connected). Returns `dispose` and `refresh`
+ * synchronously so unmount can cancel in-flight work. Use only from the Setup page effect.
+ */
+export function openQrStream(
   onQr: (qr: string) => void,
   onReady?: (connected: boolean) => void,
   onStreamError?: (message: string) => void,
-): Promise<() => void> {
+  onPollInFlight?: (inFlight: boolean) => void,
+): QrPollController {
   const blocked = mixedContentError();
   if (blocked) {
     onStreamError?.(blocked);
-    return () => {};
+    return { dispose: () => {}, refresh: () => {} };
   }
 
-  const headers = await authHeader();
-  const token = headers.authorization.replace('Bearer ', '');
-  const url = new URL(`${apiBase}/api/qr`);
-  url.searchParams.set('access_token', token);
+  let stopped = false;
+  let intervalId: number | undefined;
+  let scheduledMs = 0;
+  let lastQr = '';
+  let lastConnected: boolean | undefined;
 
-  const source = new EventSource(url.toString());
-  source.addEventListener('qr', (event) => {
-    const payload = JSON.parse((event as MessageEvent).data) as { qr: string };
-    onQr(payload.qr);
-  });
-  source.addEventListener('ready', (event) => {
-    const payload = JSON.parse((event as MessageEvent).data) as { connected: boolean };
-    onReady?.(payload.connected);
-  });
-  source.onerror = () => {
-    onStreamError?.('QR stream disconnected. Please refresh and try again.');
-    source.close();
+  let tail: Promise<void> = Promise.resolve();
+  const enqueue = (fn: () => Promise<void>) => {
+    tail = tail.then(fn).catch(() => {});
   };
-  return () => source.close();
+
+  const currentPollMs = () => (lastConnected === true ? POLL_CONNECTED_MS : POLL_MS);
+
+  const dispose = () => {
+    stopped = true;
+    if (intervalId !== undefined) {
+      window.clearInterval(intervalId);
+      intervalId = undefined;
+    }
+  };
+
+  const startOrAdjustTimer = () => {
+    if (stopped) return;
+    const need = currentPollMs();
+    if (intervalId !== undefined && scheduledMs === need) return;
+    if (intervalId !== undefined) {
+      window.clearInterval(intervalId);
+      intervalId = undefined;
+    }
+    scheduledMs = need;
+    intervalId = window.setInterval(() => {
+      void enqueue(runPoll);
+    }, scheduledMs) as unknown as number;
+  };
+
+  const runPoll = async () => {
+    if (stopped) return;
+    onPollInFlight?.(true);
+    try {
+      const headers = await authHeader();
+      if (stopped) return;
+      const res = await fetch(`${apiBase}/api/qr/poll`, { headers });
+      if (stopped) return;
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        if (!stopped) {
+          onStreamError?.(`Could not reach WhatsApp service (${res.status})${text ? `: ${text}` : ''}`);
+        }
+        dispose();
+        return;
+      }
+      const data = (await res.json()) as { qr: string | null; connected: boolean };
+      if (stopped) return;
+      if (data.qr && data.qr !== lastQr) {
+        lastQr = data.qr;
+        onQr(data.qr);
+      }
+      if (lastConnected === undefined || data.connected !== lastConnected) {
+        lastConnected = data.connected;
+        onReady?.(data.connected);
+      }
+    } catch (e) {
+      if (!stopped) {
+        onStreamError?.(e instanceof Error ? e.message : 'Network error while loading QR');
+      }
+      dispose();
+    } finally {
+      onPollInFlight?.(false);
+    }
+  };
+
+  void enqueue(async () => {
+    await runPoll();
+    startOrAdjustTimer();
+  });
+
+  const refresh = () => {
+    enqueue(async () => {
+      if (stopped) return;
+      if (intervalId !== undefined) {
+        window.clearInterval(intervalId);
+        intervalId = undefined;
+      }
+      await runPoll();
+      startOrAdjustTimer();
+    });
+  };
+
+  return { dispose, refresh };
 }

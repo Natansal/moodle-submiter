@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { openQrStream } from '../lib/api';
 import { useNavigate } from 'react-router-dom';
 import { Spinner } from '../components/Spinner';
@@ -11,9 +11,11 @@ export function SetupPage() {
   const [state, setState] = useState<ConnectionState>('connecting');
   const [errorMessage, setErrorMessage] = useState('');
 
+  const [pollBusy, setPollBusy] = useState(false);
+  const refreshPoll = useRef<(() => void) | undefined>(undefined);
+
   useEffect(() => {
-    let dispose: (() => void) | undefined;
-    void openQrStream(
+    const { dispose, refresh } = openQrStream(
       (nextQr) => {
         setQr(nextQr);
         setState('waiting_qr');
@@ -29,21 +31,36 @@ export function SetupPage() {
         setState('error');
         setErrorMessage(message);
       },
-    ).then((fn) => {
-      dispose = fn;
-    });
-    return () => dispose?.();
+      setPollBusy,
+    );
+    refreshPoll.current = refresh;
+    return () => {
+      dispose();
+      refreshPoll.current = undefined;
+    };
   }, []);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
-          WhatsApp Setup
-        </h1>
-        <p className="mt-1 text-sm text-gray-400">
-          Link your WhatsApp account by scanning the QR code below.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+            WhatsApp Setup
+          </h1>
+          <p className="mt-1 text-sm text-gray-400">
+            Link your WhatsApp account by scanning the QR code below.
+          </p>
+        </div>
+        {state !== 'error' && (
+          <button
+            type="button"
+            className="shrink-0 rounded-lg border border-gray-600 bg-gray-800/80 px-3 py-1.5 text-sm text-gray-200 transition hover:border-gray-500 hover:bg-gray-700/80 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={pollBusy}
+            onClick={() => refreshPoll.current?.()}
+          >
+            {pollBusy ? 'Checking…' : 'Refresh status'}
+          </button>
+        )}
       </div>
 
       <div className="card">
