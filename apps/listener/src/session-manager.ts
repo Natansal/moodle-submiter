@@ -13,8 +13,6 @@ import {
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import { EventEmitter } from 'node:events';
-import { createRequire } from 'node:module';
-import sharp from 'sharp';
 import { decryptJson, encryptJson, getKeyFromEnv } from '@repo/shared-crypto';
 import { getPrismaClient, usePrismaAuthState, type PrismaClient } from '@repo/database';
 import { SettingsService, type PrivateMonitor, type Uptime } from '@repo/redis';
@@ -30,16 +28,13 @@ import {
   monitorsForDbRow,
   partitionMonitoredIds,
 } from './private-monitor-aliases.js';
-
-const require = createRequire(import.meta.url);
-const jsQR = require('jsqr') as typeof import('jsqr').default;
+import { decodeQrFromImageBuffer } from './qr-decode.js';
 
 const MOODLE_HOST = 'moodle.huji.ac.il';
 const MOODLE_URL_REGEX = /(https:\/\/moodle\.huji\.ac\.il[^\s]+)/i;
 const GENERIC_URL_REGEX = /(https?:\/\/[^\s]+)/i;
 const IMAGE_QR_MAX_BYTES = 6 * 1024 * 1024;
-const IMAGE_QR_MAX_EDGE = 1600;
-const IMAGE_QR_TIMEOUT_MS = 5000;
+/** Applied only after a successful worker trigger for this user+chat (anti duplicate burst). */
 const IMAGE_QR_COOLDOWN_MS = 20_000;
 
 type UserSettingsRow = {
@@ -101,11 +96,22 @@ export class SessionManager extends EventEmitter {
   /** Per-process cache of users we've already provisioned (users + default user_settings row). */
   private readonly provisionedUsers = new Set<string>();
   private readonly provisioningInFlight = new Map<string, Promise<void>>();
-  /** Basic anti-burst guard to avoid scanning too many images from same chat in a short window. */
+  /** After a successful automation trigger, block further image-QR scans briefly (same user+chat). */
   private readonly imageQrCooldownByChat = new Map<string, number>();
+
+  private readonly automationLogger = pino({
+    name: 'listener-automation',
+    level: process.env.LOG_LEVEL ?? 'info',
+  });
 
   constructor() {
     super();
+  }
+
+  private automationDebug(payload: Record<string, unknown>): void {
+    const v = process.env.LISTENER_DEBUG_AUTOMATION?.trim().toLowerCase();
+    if (v !== '1' && v !== 'true' && v !== 'yes') return;
+    this.automationLogger.info(payload);
   }
 
   /**
@@ -524,15 +530,76 @@ export class SessionManager extends EventEmitter {
     const isDirect = this.isDirectChatJid(remoteJid);
     if (!isGroup && !isDirect) return;
 
+    const bodyText = this.extractTextMessage(msg);
+    const hasImage = this.extractImageMessage(msg) != null;
+    this.automationDebug({
+      event: 'automation_message_received',
+      userId,
+      remoteJid,
+      isGroup,
+      messageId: msg.key.id,
+      hasImage,
+      textLength: bodyText.length,
+      textSnippet: bodyText.length ? bodyText.slice(0, 200) : undefined,
+    });
+
     await this.hydrateRedisSettingsFromDbIfStale(userId);
-    if (!(await this.settingsService.isAutomationEnabled(userId))) return;
+    const settings = await this.settingsService.getSettings(userId);
+    const automationOn = await this.settingsService.isAutomationEnabled(userId);
+    if (!automationOn) {
+      this.automationDebug({
+        event: 'automation_skip',
+        reason: 'automation_disabled',
+        userId,
+        remoteJid,
+        settingsPresent: settings != null,
+        masterOn: settings?.on ?? null,
+      });
+      return;
+    }
 
     const monitored = await this.isMonitoredChat(userId, sock, remoteJid);
     const isUserUp = await this.settingsService.isUserUpNow(userId);
-    if (!monitored || !isUserUp) return;
+    if (!monitored || !isUserUp) {
+      this.automationDebug({
+        event: 'automation_skip',
+        reason: !monitored ? 'chat_not_monitored' : 'outside_uptime_window',
+        userId,
+        remoteJid,
+        monitored,
+        inUptime: isUserUp,
+      });
+      return;
+    }
 
-    const targetUrl = await this.extractCandidateUrlFromMessage(userId, msg, remoteJid);
-    if (!targetUrl) return;
+    if (!settings?.encryptedCredentials) {
+      this.automationDebug({
+        event: 'automation_skip',
+        reason: 'redis_settings_missing_credentials',
+        userId,
+        remoteJid,
+      });
+      return;
+    }
+
+    const extraction = await this.extractCandidateUrlFromMessage(userId, msg, remoteJid);
+    if (!extraction.url) {
+      this.automationDebug({
+        event: 'automation_no_candidate_url',
+        userId,
+        remoteJid,
+        ...extraction.debug,
+      });
+      return;
+    }
+
+    this.automationDebug({
+      event: 'candidate_url_found',
+      userId,
+      remoteJid,
+      source: extraction.debug.source,
+      url: extraction.url,
+    });
 
     await sock.sendPresenceUpdate('composing', remoteJid);
     await this.sleep(900 + Math.floor(Math.random() * 1400));
@@ -540,48 +607,136 @@ export class SessionManager extends EventEmitter {
     await sock.sendPresenceUpdate('paused', remoteJid);
     await this.sleep(500 + Math.floor(Math.random() * 900));
 
-    await this.triggerAutomation(userId, targetUrl);
+    try {
+      this.automationDebug({
+        event: 'worker_trigger_start',
+        userId,
+        remoteJid,
+        url: extraction.url,
+      });
+      await this.triggerAutomation(userId, extraction.url);
+      this.markPostSuccessImageQrCooldown(userId, remoteJid);
+      this.automationDebug({
+        event: 'worker_trigger_ok',
+        userId,
+        remoteJid,
+        url: extraction.url,
+      });
+    } catch (error) {
+      const boomStatus = Boom.isBoom(error) ? error.output.statusCode : undefined;
+      this.automationDebug({
+        event: 'worker_trigger_error',
+        userId,
+        remoteJid,
+        url: extraction.url,
+        httpStatus: boomStatus,
+        err: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
 
   private async extractCandidateUrlFromMessage(
     userId: string,
     msg: WAMessage,
     remoteJid: string,
-  ): Promise<string | null> {
+  ): Promise<{ url: string | null; debug: Record<string, unknown> }> {
     const messageText = this.extractTextMessage(msg);
     const textMatch = messageText.match(MOODLE_URL_REGEX);
     if (textMatch && this.isAllowedMoodleUrl(textMatch[0])) {
-      return textMatch[0];
+      return { url: textMatch[0], debug: { source: 'text' as const } };
     }
 
     const imageMessage = this.extractImageMessage(msg);
-    if (!imageMessage) return null;
-    if (!this.canAttemptImageQr(userId, remoteJid)) return null;
+    if (!imageMessage) {
+      return { url: null, debug: { hasImage: false } };
+    }
+
+    const rawCaption = (imageMessage as { caption?: unknown }).caption;
+    const caption = typeof rawCaption === 'string' ? rawCaption : '';
+    if (caption) {
+      const capMatch = caption.match(MOODLE_URL_REGEX);
+      if (capMatch && this.isAllowedMoodleUrl(capMatch[0])) {
+        return { url: capMatch[0], debug: { source: 'caption' as const, hasImage: true } };
+      }
+    }
+
+    if (this.isPostSuccessImageQrCooldownActive(userId, remoteJid)) {
+      this.automationDebug({
+        event: 'image_qr_cooldown_skipped',
+        userId,
+        remoteJid,
+        reason: 'post_success_cooldown',
+      });
+      return {
+        url: null,
+        debug: { hasImage: true, imageQrCooldownSkipped: true },
+      };
+    }
 
     const declaredSize = this.toNumberOrNull((imageMessage as { fileLength?: unknown }).fileLength);
+    const debug: Record<string, unknown> = { hasImage: true, imageDeclaredSize: declaredSize ?? undefined };
     if (declaredSize != null && declaredSize > IMAGE_QR_MAX_BYTES) {
-      console.log(
-        `[SessionManager] Skip image QR scan: file too large user=${userId} chat=${remoteJid} bytes=${declaredSize}`,
-      );
-      return null;
+      debug.imageQrRejectReason = 'too_large';
+      return { url: null, debug };
     }
 
     try {
+      this.automationDebug({
+        event: 'image_qr_scan_start',
+        userId,
+        remoteJid,
+        declaredSize: declaredSize ?? null,
+      });
       const imageBuffer = await this.downloadImageMessageBuffer(imageMessage);
-      const qrText = await this.decodeQrFromImageBuffer(imageBuffer);
+      const qrText = await decodeQrFromImageBuffer(imageBuffer);
+      debug.qrDecoded = Boolean(qrText);
       if (!qrText) {
-        console.log(`[SessionManager] Image QR not detected user=${userId} chat=${remoteJid}`);
-        return null;
+        debug.imageQrRejectReason = 'not_detected';
+        this.automationDebug({
+          event: 'image_qr_scan_result',
+          userId,
+          remoteJid,
+          decoded: false,
+          ...debug,
+        });
+        return { url: null, debug };
       }
       const genericMatch = qrText.match(GENERIC_URL_REGEX);
       if (!genericMatch || !this.isAllowedMoodleUrl(genericMatch[0])) {
-        console.log(`[SessionManager] Image QR URL not allowed user=${userId} chat=${remoteJid}`);
-        return null;
+        debug.imageQrRejectReason = 'url_not_allowed';
+        debug.qrPayloadPreview = qrText.slice(0, 160);
+        this.automationDebug({
+          event: 'image_qr_scan_result',
+          userId,
+          remoteJid,
+          decoded: true,
+          allowed: false,
+          ...debug,
+        });
+        return { url: null, debug };
       }
-      return genericMatch[0];
+      this.automationDebug({
+        event: 'image_qr_scan_result',
+        userId,
+        remoteJid,
+        decoded: true,
+        allowed: true,
+        ...debug,
+      });
+      return { url: genericMatch[0], debug: { ...debug, source: 'image_qr' as const } };
     } catch (error) {
+      debug.imageQrRejectReason = 'error';
+      debug.imageQrErrorMessage = error instanceof Error ? error.message : String(error);
+      this.automationDebug({
+        event: 'image_qr_scan_result',
+        userId,
+        remoteJid,
+        decoded: false,
+        error: debug.imageQrErrorMessage,
+      });
       console.warn(`[SessionManager] Image QR scan failed user=${userId} chat=${remoteJid}:`, error);
-      return null;
+      return { url: null, debug };
     }
   }
 
@@ -652,13 +807,16 @@ export class SessionManager extends EventEmitter {
     return {};
   }
 
-  private canAttemptImageQr(userId: string, remoteJid: string): boolean {
+  private isPostSuccessImageQrCooldownActive(userId: string, remoteJid: string): boolean {
     const key = `${userId}:${remoteJid}`;
     const now = Date.now();
     const nextAllowed = this.imageQrCooldownByChat.get(key) ?? 0;
-    if (now < nextAllowed) return false;
-    this.imageQrCooldownByChat.set(key, now + IMAGE_QR_COOLDOWN_MS);
-    return true;
+    return now < nextAllowed;
+  }
+
+  private markPostSuccessImageQrCooldown(userId: string, remoteJid: string): void {
+    const key = `${userId}:${remoteJid}`;
+    this.imageQrCooldownByChat.set(key, Date.now() + IMAGE_QR_COOLDOWN_MS);
   }
 
   private async downloadImageMessageBuffer(imageMessage: Record<string, unknown>): Promise<Buffer> {
@@ -674,33 +832,6 @@ export class SessionManager extends EventEmitter {
       chunks.push(piece);
     }
     return Buffer.concat(chunks);
-  }
-
-  private async decodeQrFromImageBuffer(imageBuffer: Buffer): Promise<string | null> {
-    const decodeTask = (async () => {
-      let pipeline = sharp(imageBuffer, { failOn: 'none' }).rotate();
-      const metadata = await pipeline.metadata();
-      const width = metadata.width ?? 0;
-      const height = metadata.height ?? 0;
-      if (width > IMAGE_QR_MAX_EDGE || height > IMAGE_QR_MAX_EDGE) {
-        pipeline = pipeline.resize({
-          width: IMAGE_QR_MAX_EDGE,
-          height: IMAGE_QR_MAX_EDGE,
-          fit: 'inside',
-          withoutEnlargement: true,
-        });
-      }
-      const { data, info } = await pipeline.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-      const qr = jsQR(new Uint8ClampedArray(data), info.width, info.height);
-      const value = qr?.data?.trim();
-      return value ? value : null;
-    })();
-
-    const timeoutTask = new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), IMAGE_QR_TIMEOUT_MS);
-    });
-
-    return Promise.race([decodeTask, timeoutTask]);
   }
 
   private isAllowedMoodleUrl(candidate: string): boolean {
